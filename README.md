@@ -24,7 +24,7 @@ For a complete list of dependencies, see `requirements.txt`.
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/md-trajectory-analysis-tool.git
+   git clone https://github.com/winniecook/md-trajectory-analysis-tool.git
    cd md-trajectory-analysis-tool
    ```
 
