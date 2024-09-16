@@ -24,8 +24,8 @@ For a complete list of dependencies, see `requirements.txt`.
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/md-trajectory-analysis.git
-   cd md-trajectory-analysis
+   git clone https://github.com/yourusername/md-trajectory-analysis-tool.git
+   cd md-trajectory-analysis-tool
    ```
 
 2. Install the required packages:
@@ -47,7 +47,7 @@ For a complete list of dependencies, see `requirements.txt`.
 
 3. Run the script:
    ```
-   python md_analysis_v6.py
+   python md-analysis-script-v6.py
    ```
 
 4. The script will generate the following output:
