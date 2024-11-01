@@ -1,0 +1,372 @@
+---
+title: "Molecular Dynamics Trajectory Analysis"
+author: "Winnie"
+date: "31/10/24"
+format:
+  html:
+    code-fold: false
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+execute:
+  warning: false
+  message: false
+---
+
+## Overview
+
+This document demonstrates the analysis of molecular dynamics (MD) trajectory data using R. The analysis includes calculations of Root Mean Square Deviation (RMSD) and Radial Distribution Function (RDF), which are essential metrics in molecular dynamics studies.
+
+::: {.callout-note}
+## Educational Purpose
+This is an educational exercise using simulated data. In real MD studies, trajectory data would typically come from molecular dynamics simulation software like GROMACS, NAMD, or AMBER, and would contain actual atomic coordinates over time.
+:::
+
+## Setup
+
+First, let's load the required libraries and set up our environment.
+
+```{r setup}
+
+library(tidyverse)    # For data manipulation and visualization
+library(pracma)       # For scientific computing functions
+library(plotly)       # For interactive plots
+library(here)         # For project-relative paths
+library(knitr)        # For nice tables
+library(broom)        # For statistical outputs
+library(viridis)      # For color palettes
+library(moments)      # For statistical moments
+library(kableExtra)   # For enhancing tables
+
+# Set theme for consistent plotting
+theme_set(
+  theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(size = 14, face = "bold"),
+      plot.subtitle = element_text(size = 12, color = "gray50")
+    )
+)
+```
+
+## Data Import and Processing
+
+We'll create a function to generate sample MD trajectory data, as this is an educational exercise. In real applications, you would import actual MD trajectory data.
+
+```{r generate-data}
+#' Generate sample MD trajectory data
+#' @param n_frames Number of time frames
+#' @param n_atoms Number of atoms
+#' @param noise_level Amount of random movement
+#' @return A tibble with time and coordinate columns
+generate_md_data <- function(n_frames = 1000, n_atoms = 100, noise_level = 0.1) {
+  # Create time points
+  time_points <- seq(0, n_frames - 1) * 0.001  # ps
+  
+  # Generate base structure (random initial positions)
+  base_structure <- matrix(
+    rnorm(n_atoms * 3, mean = 0, sd = 1),
+    nrow = 1,
+    ncol = n_atoms * 3,
+    dimnames = list(
+      NULL,
+      # Create unique column names for each coordinate
+      paste0(
+        "atom_",
+        rep(1:n_atoms, each = 3),
+        "_",
+        rep(c("x", "y", "z"), n_atoms)
+      )
+    )
+  )
+  
+  # Generate trajectories with random movement
+  trajectories <- map_dfr(time_points, function(t) {
+    # Add random movement to base structure
+    movement <- matrix(
+      rnorm(n_atoms * 3, mean = 0, sd = noise_level),
+      nrow = 1,
+      ncol = n_atoms * 3,
+      dimnames = dimnames(base_structure)
+    )
+    structure <- base_structure + movement
+    
+    # Convert to tibble row and add time
+    bind_cols(
+      as_tibble(structure),
+      time = t
+    )
+  })
+  
+  trajectories
+}
+
+# Generate sample data
+md_data <- generate_md_data()
+
+# Display the first few column names to verify structure
+head(colnames(md_data), 10)
+```
+
+## Analysis Functions
+
+### RMSD Calculation
+
+The Root Mean Square Deviation measures structural deviation from a reference structure (usually the initial frame).
+
+```{r rmsd-function}
+#' Calculate RMSD from trajectory data
+#' @param data Trajectory data frame
+#' @return Tibble with time and RMSD values
+calculate_rmsd <- function(data) {
+  # Get coordinate columns (all except time)
+  coord_cols <- setdiff(names(data), "time")
+  
+  # Convert to matrix for efficient calculation
+  coords_matrix <- as.matrix(data[, coord_cols])
+  
+  # Get reference structure (first frame)
+  ref_structure <- coords_matrix[1, ]
+  
+  # Calculate RMSD
+  rmsd_values <- sqrt(
+    rowMeans(
+      (sweep(coords_matrix, 2, ref_structure))^2
+    )
+  )
+  
+  # Return as tibble with time
+  tibble(
+    time = data$time,
+    rmsd = rmsd_values
+  )
+}
+
+# Calculate RMSD
+rmsd_data <- calculate_rmsd(md_data)
+
+# Show first few rows of RMSD data
+print("First few rows of RMSD data:")
+head(rmsd_data)
+
+# Show summary statistics
+print("\nRMSD summary statistics:")
+summary(rmsd_data$rmsd)
+
+# Show first few rows of RMSD data
+head(rmsd_data)
+```
+
+### RDF Calculation
+
+The Radial Distribution Function describes how atomic density varies as a function of distance from a reference particle.
+
+```{r rdf-function}
+#' Calculate Radial Distribution Function
+#' @param data Trajectory data frame
+#' @param bins Number of distance bins
+#' @param max_dist Maximum distance to consider
+#' @return Tibble with distance and g(r) values
+calculate_rdf <- function(data, bins = 100, max_dist = 10) {
+  # Extract coordinates for distance calculation
+  coords_matrix <- data %>%
+    select(-time) %>%
+    as.matrix()
+  
+  # Calculate pairwise distances for each coordinate set
+  distances <- apply(coords_matrix, 1, function(row) {
+    coords <- matrix(row, ncol = 3, byrow = TRUE)
+    dist_matrix <- as.matrix(dist(coords))
+    dist_matrix[upper.tri(dist_matrix)]
+  }) %>%
+    unlist()
+  
+  # Calculate RDF
+  hist_result <- hist(distances, breaks = seq(0, max_dist, length.out = bins + 1),
+                     plot = FALSE)
+  
+  # Calculate bin centers and normalize
+  tibble(
+    r = hist_result$mids,
+    gr = hist_result$counts / (4 * pi * hist_result$mids^2)
+  ) %>%
+    # Normalize g(r)
+    mutate(gr = gr / max(gr, na.rm = TRUE)) %>%
+    # Remove any NaN values that might occur at r = 0
+    filter(!is.na(gr))
+}
+
+# Calculate RDF
+rdf_data <- calculate_rdf(md_data)
+```
+
+## Visualization
+
+### RMSD Plot
+
+```{r rmsd-plot}
+rmsd_plot <- ggplot(rmsd_data, aes(x = time, y = rmsd)) +
+  geom_line(color = "#2C3E50", size = 0.8) +
+  geom_smooth(method = "loess", color = "#E74C3C", se = TRUE, alpha = 0.2) +
+  labs(
+    title = "Root Mean Square Deviation Over Time",
+    subtitle = "With LOESS smoothing",
+    x = "Time (ps)",
+    y = "RMSD (arbitrary units)"
+  )
+
+# Convert to interactive plot
+ggplotly(rmsd_plot) %>%
+  layout(hovermode = "x unified")
+```
+
+### RDF Plot
+
+```{r rdf-plot}
+rdf_plot <- ggplot(rdf_data, aes(x = r, y = gr)) +
+  geom_line(color = "#2980B9", size = 0.8) +
+  geom_area(alpha = 0.2, fill = "#2980B9") +
+  labs(
+    title = "Radial Distribution Function",
+    subtitle = "Normalized g(r)",
+    x = "Distance (arbitrary units)",
+    y = "g(r)"
+  )
+
+# Convert to interactive plot
+ggplotly(rdf_plot) %>%
+  layout(hovermode = "x unified")
+```
+
+## Statistical Analysis
+
+Let's perform some basic statistical analysis on our trajectory data.
+
+```{r statistics}
+
+  # Calculate comprehensive statistics for RMSD
+  rmsd_stats <- rmsd_data %>%
+    summarise(
+      n_frames = n(),
+      mean_rmsd = mean(rmsd),
+      sd_rmsd = sd(rmsd),
+      se_rmsd = sd_rmsd / sqrt(n_frames),
+      min_rmsd = min(rmsd),
+      max_rmsd = max(rmsd),
+      median_rmsd = median(rmsd),
+      q25 = quantile(rmsd, 0.25),
+      q75 = quantile(rmsd, 0.75),
+      iqr = IQR(rmsd),
+      skewness = moments::skewness(rmsd),
+      kurtosis = moments::kurtosis(rmsd)
+    ) %>%
+    pivot_longer(
+      everything(),
+      names_to = "Statistic",
+      values_to = "Value"
+    ) %>%
+    mutate(
+      Statistic = case_when(
+        Statistic == "n_frames" ~ "Number of Frames",
+        Statistic == "mean_rmsd" ~ "Mean RMSD",
+        Statistic == "sd_rmsd" ~ "Standard Deviation",
+        Statistic == "se_rmsd" ~ "Standard Error",
+        Statistic == "min_rmsd" ~ "Minimum RMSD",
+        Statistic == "max_rmsd" ~ "Maximum RMSD",
+        Statistic == "median_rmsd" ~ "Median RMSD",
+        Statistic == "q25" ~ "25th Percentile",
+        Statistic == "q75" ~ "75th Percentile",
+        Statistic == "iqr" ~ "Interquartile Range",
+        Statistic == "skewness" ~ "Skewness",
+        Statistic == "kurtosis" ~ "Kurtosis",
+        TRUE ~ Statistic
+      )
+    )
+
+# Create formatted table
+kable(rmsd_stats,
+      caption = "Summary Statistics for RMSD",
+      digits = 4,
+      col.names = c("Metric", "Value"),
+      align = c('l', 'r')) %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover"),
+      full_width = FALSE,
+      position = "left"
+    )
+
+# Add distribution visualization
+ggplot(rmsd_data, aes(x = rmsd)) +
+  geom_histogram(aes(y = ..density..), 
+                bins = 30, 
+                fill = "#2980B9", 
+                alpha = 0.7) +
+  geom_density(color = "#E74C3C", size = 1) +
+  geom_rug(alpha = 0.3) +
+  labs(
+    title = "Distribution of RMSD Values",
+    subtitle = "With density estimation",
+    x = "RMSD",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+# Add time series decomposition
+if (length(unique(diff(rmsd_data$time))) == 1) {  # Check if time points are regular
+  ts_data <- ts(rmsd_data$rmsd, 
+                frequency = round(1/mean(diff(rmsd_data$time))))
+  
+  decomposition <- decompose(ts_data)
+  
+  par(mfrow = c(4,1), mar = c(2,4,2,2))
+  plot(decomposition$x, main = "Original Time Series", ylab = "RMSD")
+  plot(decomposition$seasonal, main = "Seasonal Component", ylab = "Seasonal")
+  plot(decomposition$trend, main = "Trend Component", ylab = "Trend")
+  plot(decomposition$random, main = "Random Component", ylab = "Random")
+  par(mfrow = c(1,1))
+}
+
+# Add autocorrelation analysis
+acf_data <- acf(rmsd_data$rmsd, plot = FALSE)
+pacf_data <- pacf(rmsd_data$rmsd, plot = FALSE)
+
+par(mfrow = c(1,2))
+plot(acf_data, main = "Autocorrelation Function")
+plot(pacf_data, main = "Partial Autocorrelation Function")
+par(mfrow = c(1,1))
+```
+
+## Future Improvements
+
+This analysis could be extended in several ways:
+
+1. Implementation of additional MD analysis metrics:
+   - Radius of gyration
+   - Hydrogen bond analysis
+   - Secondary structure analysis
+   - Principal Component Analysis (PCA)
+
+2. Performance optimizations:
+   - Parallel processing for large trajectories
+   - Memory-efficient data handling
+   - GPU acceleration for distance calculations
+
+3. Visualization enhancements:
+   - 3D structure visualization
+   - Time-resolved structure analysis
+   - Custom color schemes for different atom types
+
+## References
+
+For real MD analysis, consider these resources:
+
+- [Bio3D](http://thegrantlab.org/bio3d/) - R package for structural bioinformatics
+- [MDAnalysis](https://www.mdanalysis.org/) - Python library for MD analysis
+- [VMD](https://www.ks.uiuc.edu/Research/vmd/) - Visual Molecular Dynamics
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```
